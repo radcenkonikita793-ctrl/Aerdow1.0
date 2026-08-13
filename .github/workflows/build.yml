@@ -1,4 +1,4 @@
-name: Ultimate iOS IPA Build (Godot 4.3 + Xcode)
+name: Ultimate Comprehensive iOS Build Pipeline (Godot 4.3 + Xcode CLI)
 
 on:
   push:
@@ -8,36 +8,39 @@ on:
 env:
   GODOT_VERSION: "4.3-stable"
   GODOT_VERSION_DIR: "4.3.stable"
+  BUNDLE_ID: "com.biteraplaystaz.aerdrom"
+  APP_NAME: "Aerdrom"
 
 jobs:
-  build-ios:
-    name: Build Unsigned IPA for ESign
+  build-unsigned-ipa:
+    name: Full iOS Compilation Pipeline
     runs-on: macos-14
-    timeout-minutes: 35
+    timeout-minutes: 40
 
     steps:
-      # 1. Клонирование репозитория
-      - name: Checkout Source Code
+      # --- 1. ПУЛЛ ИСХОДНОГО КОДА ---
+      - name: 1. Checkout Repository Source Code
         uses: actions/checkout@v4
         with:
           lfs: true
+          submodules: recursive
 
-      # 2. Активация инструментария Xcode 15
-      - name: Setup Xcode Environment
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: "15.4"
+      # --- 2. НАСТРОЙКА ИНСТРУМЕНТАРИЯ XCODE ---
+      - name: 2. Select Active Xcode Version
+        run: |
+          sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+          xcodebuild -version
 
-      # 3. Скачивание Godot Engine 4.3 и официальных шаблонов экспорта
-      - name: Download & Install Godot Engine + Export Templates
+      # --- 3. УСТАНОВКА GODOT ENGINE И ШАБЛОНОВ ЭКСПОРТА ---
+      - name: 3. Download & Install Godot Engine + iOS Export Templates
         run: |
           set -euxo pipefail
-          echo "Скачивание Godot Engine..."
+          echo ">>> Скачиваем Godot Engine Universal Binary..."
           curl -L -o godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_macos.universal.zip"
           unzip -q godot.zip
           mv Godot.app /Applications/Godot.app
 
-          echo "Установка шаблонов экспорта..."
+          echo ">>> Скачиваем и распаковываем официальные шаблоны экспорта..."
           curl -L -o templates.tpz "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz"
           unzip -q templates.tpz
 
@@ -46,40 +49,45 @@ jobs:
           mv templates/ios.zip "$TEMPLATE_DIR/ios.zip"
           rm -rf godot.zip templates.tpz templates/
 
-      # 4. Распаковка архивов проекта и выдача прав
-      - name: Unpack Workspace & Set Permissions
+      # --- 4. РАСПАКОВКА И ИНИЦИАЛИЗАЦИЯ РАБОЧЕГО ПРОСТРАНСТВА ---
+      - name: 4. Prepare Workspace & Fix Permissions
         run: |
           set -euxo pipefail
           mkdir -p workspace
 
+          # Распаковка архивов проекта, если они загружены в репозиторий
           for archive in *.zip; do
             if [ -f "$archive" ]; then
               unzip -qo "$archive" -d workspace/
             fi
           done
 
+          # Поиск корня проекта (где лежит project.godot)
           ROOT_DIR=$(find workspace -name "project.godot" -exec dirname {} \;)
           if [ -n "$ROOT_DIR" ] && [ "$ROOT_DIR" != "workspace" ]; then
             rsync -a "$ROOT_DIR/" workspace/
             rm -rf "$ROOT_DIR"
           fi
 
-          # Полный сброс кэша и выдача прав на запись
+          # Полная выдача прав на чтение/запись для предотвращения ошибок доступа
+          chmod -R 777 workspace
           rm -rf workspace/.godot
-          chmod -R 777 workspace
 
-      # 5. Предварительный импорт ресурсов (убирает ошибки filesystem_cache8)
-      - name: Import Godot Project Resources
+      # --- 5. ПРЕДВАРИТЕЛЬНЫЙ ИМПОРТ И ГЕНЕРАЦИЯ КЭША РЕСУРСОВ ---
+      - name: 5. Force Import Godot Assets (Prevent Cache Errors)
         run: |
           set -euxo pipefail
+          echo ">>> Инициализация редактора Godot для построения импорта и кэша..."
           /Applications/Godot.app/Contents/MacOS/Godot --path workspace --headless --editor --quit || true
+          
+          # Выдача прав на сгенерированные файлы кэша .godot
           chmod -R 777 workspace
 
-      # 6. Генерация конфигурации пресета под Xcode
-      - name: Generate Export Presets
+      # --- 6. СОЗДАНИЕ ПОЛНОГО EXPORT_PRESETS.CFG ---
+      - name: 6. Generate Complete Export Presets Configuration
         run: |
           set -euxo pipefail
-          cat << 'EOF' > workspace/export_presets.cfg
+          cat << EOF > workspace/export_presets.cfg
           [preset.0]
 
           name="iOS"
@@ -90,14 +98,14 @@ jobs:
           export_filter="all_resources"
           include_filter=""
           exclude_filter=""
-          export_path="build/ios/Aerdrom.xcodeproj"
+          export_path="build/ios/${APP_NAME}.xcodeproj"
           encryption_include_filters=""
           encryption_exclude_filters=""
           encrypt_pck=false
           encrypt_script=false
 
           [preset.0.options]
-          application/bundle_identifier="com.biteraplaystaz.aerdrom"
+          application/bundle_identifier="${BUNDLE_ID}"
           application/signature="aerd"
           application/short_version="1.0"
           application/version="1.0"
@@ -106,50 +114,52 @@ jobs:
           codesign/identity=""
           codesign/entitlements=""
           provisioning_profile=""
-          privacy/camera_usage_description="Camera access"
-          privacy/microphone_usage_description="Microphone access"
-          privacy/photo_library_usage_description="Photo library access"
+          privacy/camera_usage_description="Camera access required"
+          privacy/microphone_usage_description="Microphone access required"
+          privacy/photo_library_usage_description="Photo library access required"
           EOF
 
-      # 7. Экспорт из Godot в проект Xcode (.xcodeproj)
-      - name: Export Xcode Project via Godot
+      # --- 7. ЭКСПОРТ ИЗ GODOT В ИСХОДНЫЙ ПРОЕКТ XCODE ---
+      - name: 7. Export Xcode Project via Godot Headless
         run: |
           set -euxo pipefail
           mkdir -p workspace/build/ios
           chmod -R 777 workspace/build
 
+          echo ">>> Экспорт проекта Godot в формат Xcode Project..."
           /Applications/Godot.app/Contents/MacOS/Godot --path workspace \
             --headless \
-            --export-release "iOS" "$PWD/workspace/build/ios/Aerdrom.xcodeproj"
+            --export-release "iOS" "$PWD/workspace/build/ios/${APP_NAME}.xcodeproj"
 
-      # 8. Компиляция приложения с помощью Xcode CLI и запаковка под ESign
-      - name: Compile Unsigned IPA via Xcode
+      # --- 8. СБОРКА И УПАКОВКА НЕПОДПИСАННОГО IPA ЧЕРЕЗ XCODEBUILD ---
+      - name: 8. Build Unsigned IPA via Xcode CLI Toolchain
         run: |
           set -euxo pipefail
           cd workspace/build/ios
 
-          echo "Сборка архива через xcodebuild..."
+          echo ">>> Компиляция iOS-приложения через Xcode..."
           xcodebuild archive \
-            -project Aerdrom.xcodeproj \
-            -scheme Aerdrom \
+            -project ${APP_NAME}.xcodeproj \
+            -scheme ${APP_NAME} \
             -sdk iphoneos \
             -configuration Release \
-            -archivePath build/Aerdrom.xcarchive \
+            -archivePath build/${APP_NAME}.xcarchive \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             PROVISIONING_PROFILE_SPECIFIER=""
 
-          echo "Создание структуры Payload и упаковка в .ipa..."
+          echo ">>> Формирование структуры Payload для ESign..."
           mkdir -p Payload
-          cp -r build/Aerdrom.xcarchive/Products/Applications/*.app Payload/
-          zip -r Aerdrom.ipa Payload/
+          cp -r build/${APP_NAME}.xcarchive/Products/Applications/*.app Payload/
+          zip -r ${APP_NAME}.ipa Payload/
 
-          ls -lh Aerdrom.ipa
+          echo ">>> Сборка завершена успешно! Проверка итогового IPA:"
+          ls -lh ${APP_NAME}.ipa
 
-      # 9. Сохранение финального неподписанного .ipa
-      - name: Upload Finished IPA Artifact
+      # --- 9. ЗАГРУЗКА ГОТОВОГО ФАЙЛА В ARTIFACTS ---
+      - name: 9. Upload Finished IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Aerdrom-iOS-IPA
-          path: workspace/build/ios/Aerdrom.ipa
+          name: ${APP_NAME}-iOS-Unsigned-IPA
+          path: workspace/build/ios/${APP_NAME}.ipa
