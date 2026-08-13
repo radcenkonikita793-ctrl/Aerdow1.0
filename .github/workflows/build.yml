@@ -14,7 +14,7 @@ jobs:
 
       - name: Unpack Project Parts
         run: |
-          echo "Распаковываем все части проекта в единую папку..."
+          echo "Распаковываем все части проекта..."
           mkdir -p extracted_project
           for f in *.zip; do
             if [ -f "$f" ]; then
@@ -25,11 +25,46 @@ jobs:
           if [ -d "extracted_project/aerdw1.0" ]; then
             mv extracted_project/aerdw1.0/* extracted_project/
           fi
+          # Удаляем старый .godot, если есть, чтобы не мешал
           rm -rf extracted_project/.godot
+
+      - name: Create Export Preset
+        run: |
+          echo "Создаем файл export_presets.cfg для iOS..."
+          cat << 'EOF' > extracted_project/export_presets.cfg
+          [preset.0]
+
+          name="iOS"
+          platform="iOS"
+          runnable=false
+          dedicated_server=false
+          custom_features=""
+          export_filter="all_resources"
+          include_filter=""
+          exclude_filter=""
+          export_path="build/ios/aerdrom.ipa"
+          encryption_include_filters=""
+          encryption_exclude_filters=""
+          encrypt_pck=false
+          encrypt_script=false
+
+          [preset.0.options]
+          application/icon=""
+          application/splash=""
+          application/splash_dark=""
+          application/splash_bg_color="#ffffff"
+          architectures/arm64=true
+          codesign/identity=""
+          codesign/entitlements=""
+          provisioning_profile=""
+          privacy/camera_usage_description=""
+          privacy/microphone_usage_description=""
+          privacy/photo_library_usage_description=""
+          EOF
 
       - name: Download and Setup Godot
         run: |
-          echo "Скачиваем Godot Engine для macOS..."
+          echo "Скачиваем Godot Engine..."
           GODOT_VERSION="4.3-stable"
           curl -L -o godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_macos.universal.zip"
           unzip -q godot.zip
@@ -39,7 +74,7 @@ jobs:
         run: |
           cd extracted_project
           mkdir -p build/ios
-          echo "Экспортируем проект через Godot..."
+          echo "Запускаем экспорт через Godot..."
           /Applications/Godot.app/Contents/MacOS/Godot --headless --export-release "iOS" build/ios/aerdrom.ipa
 
       - name: Upload IPA Artifact
