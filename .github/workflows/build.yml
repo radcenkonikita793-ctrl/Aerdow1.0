@@ -1,4 +1,4 @@
-name: Fixed iOS IPA Build (Godot Engine)
+name: Ultimate iOS Build for ESign
 
 on:
   push:
@@ -11,26 +11,27 @@ env:
 
 jobs:
   build-ios:
-    name: Build Unsigned IPA for ESign
+    name: Build Unsigned IPA
     runs-on: macos-14
     timeout-minutes: 30
 
     steps:
+      # 1. Загрузка исходников из репозитория
       - name: Checkout Source Code
         uses: actions/checkout@v4
         with:
           lfs: true
 
-      - name: Download & Install Godot Engine + Templates
+      # 2. Скачивание и установка Godot Engine и официальных шаблонов
+      - name: Download & Install Godot Engine + Export Templates
         run: |
           set -euxo pipefail
-          echo "Скачиваем Godot Engine ${GODOT_VERSION}..."
-          
+          echo "Скачивание Godot Engine..."
           curl -L -o godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_macos.universal.zip"
           unzip -q godot.zip
           mv Godot.app /Applications/Godot.app
 
-          echo "Скачиваем шаблоны экспорта..."
+          echo "Установка шаблонов экспорта..."
           curl -L -o templates.tpz "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz"
           unzip -q templates.tpz
 
@@ -39,7 +40,8 @@ jobs:
           mv templates/ios.zip "$TEMPLATE_DIR/ios.zip"
           rm -rf godot.zip templates.tpz templates/
 
-      - name: Unpack Project Workspace
+      # 3. Распаковка архивов проекта и выдача прав на запись
+      - name: Prepare Workspace & Grant Write Permissions
         run: |
           set -euxo pipefail
           mkdir -p workspace
@@ -55,9 +57,13 @@ jobs:
             rsync -a "$ROOT_DIR/" workspace/
             rm -rf "$ROOT_DIR"
           fi
+
+          # Выдача полных прав на запись для предотвращения ошибок доступа
+          chmod -R 777 workspace
           rm -rf workspace/.godot
 
-      - name: Generate Export Preset
+      # 4. Генерация корректного export_presets.cfg
+      - name: Generate Export Presets
         run: |
           set -euxo pipefail
           cat << 'EOF' > workspace/export_presets.cfg
@@ -78,7 +84,7 @@ jobs:
           encrypt_script=false
 
           [preset.0.options]
-          application/bundle_identifier="com.aerdrom.game"
+          application/bundle_identifier="com.biteraplaystaz.aerdrom"
           application/signature="aerd"
           application/short_version="1.0"
           application/version="1.0"
@@ -92,19 +98,20 @@ jobs:
           privacy/photo_library_usage_description="Photo library access"
           EOF
 
-      - name: Export Project via Godot
+      # 5. Экспорт проекта через Godot Headless
+      - name: Export iOS Project
         run: |
           set -euxo pipefail
           mkdir -p workspace/build/ios
-          mkdir -p godot_cache_dir
+          chmod -R 777 workspace/build
 
           /Applications/Godot.app/Contents/MacOS/Godot --path workspace \
-            --editor-setting-path "$PWD/godot_cache_dir" \
             --headless \
             --export-release "iOS" "$PWD/workspace/build/ios/Aerdrom.ipa"
 
           ls -lh workspace/build/ios/Aerdrom.ipa
 
+      # 6. Сохранение готового файла .ipa
       - name: Upload Finished IPA Artifact
         uses: actions/upload-artifact@v4
         with:
