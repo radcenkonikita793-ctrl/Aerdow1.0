@@ -82,6 +82,7 @@ jobs:
           application/signature="aerd"
           application/short_version="1.0"
           application/version="1.0"
+          application/app_store_team_id="1234567890"
           architectures/arm64=true
           codesign/identity=""
           codesign/entitlements=""
