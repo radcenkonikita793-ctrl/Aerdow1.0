@@ -1,112 +1,63 @@
-name: Ultimate iOS Xcode & Godot 4.7 Pipeline
+name: Fixed iOS IPA Build (Godot Engine)
 
 on:
   push:
     branches: [ "main", "master" ]
   workflow_dispatch:
-    inputs:
-      godot_version:
-        description: "Версия Godot Engine"
-        required: true
-        default: "4.7-stable"
 
 env:
-  GODOT_VERSION: "${{ github.event.inputs.godot_version || '4.7-stable' }}"
-  GODOT_VERSION_DIR: "4.7.stable"
-  APP_NAME: "Aerdrom"
+  GODOT_VERSION: "4.3-stable"
+  GODOT_VERSION_DIR: "4.3.stable"
 
 jobs:
-  build-ios-godot47:
-    name: Compile Unsigned IPA (Godot 4.7 + Xcode)
-    runs-on: macos-14 # Виртуальная машина Apple Silicon (macOS Sonoma)
-    timeout-minutes: 60
+  build-ios:
+    name: Build Unsigned IPA for ESign
+    runs-on: macos-14
+    timeout-minutes: 30
 
     steps:
-      # 1. Клонирование репозитория
       - name: Checkout Source Code
         uses: actions/checkout@v4
         with:
           lfs: true
 
-      # 2. Активация и настройка Xcode в виртуальной машине
-      - name: Setup Xcode Toolchain
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: "15.4"
-
-      # 3. Диагностика окружения macOS
-      - name: Verify Virtual Machine Environment
-        run: |
-          echo "=== ИНФОРМАЦИЯ О СИСТЕМЕ macOS ==="
-          sw_vers
-          echo "=== ПРОВЕРКА XCODE ==="
-          xcodebuild -version
-          echo "=== УСТАНОВЛЕННЫЕ SDK ==="
-          xcodebuild -showsdks
-
-      # 4. Двухуровневое кэширование Godot 4.7
-      - name: Cache Godot 4.7 Engine and Export Templates
-        id: cache-godot
-        uses: actions/cache@v4
-        with:
-          path: |
-            /Applications/Godot.app
-            ~/Library/Application Support/Godot/export_templates
-          key: ${{ runner.os }}-godot47-${{ env.GODOT_VERSION }}
-
-      # 5. Загрузка Godot Engine 4.7 и шаблонов под iOS
-      - name: Download & Install Godot 4.7 Engine + Templates
-        if: steps.cache-godot.outputs.cache-hit != 'true'
+      - name: Download & Install Godot Engine + Templates
         run: |
           set -euxo pipefail
-          echo "Загрузка Godot Engine version ${GODOT_VERSION}..."
+          echo "Скачиваем Godot Engine ${GODOT_VERSION}..."
           
-          ENGINE_URL="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_macos.universal.zip"
-          TEMPLATES_URL="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz"
-
-          # Скачивание и установка движка
-          curl -L -o godot.zip "$ENGINE_URL"
+          curl -L -o godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_macos.universal.zip"
           unzip -q godot.zip
           mv Godot.app /Applications/Godot.app
 
-          # Скачивание и размещение шаблонов экспорта
-          echo "Загрузка шаблонов экспорта iOS..."
-          curl -L -o templates.tpz "$TEMPLATES_URL"
+          echo "Скачиваем шаблоны экспорта..."
+          curl -L -o templates.tpz "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz"
           unzip -q templates.tpz
 
           TEMPLATE_DIR="$HOME/Library/Application Support/Godot/export_templates/${GODOT_VERSION_DIR}"
           mkdir -p "$TEMPLATE_DIR"
           mv templates/ios.zip "$TEMPLATE_DIR/ios.zip"
-
           rm -rf godot.zip templates.tpz templates/
 
-      # 6. Распаковка архивов проекта и объединение
-      - name: Unpack and Sanitize Project Workspace
+      - name: Unpack Project Workspace
         run: |
           set -euxo pipefail
           mkdir -p workspace
 
-          # Распаковка заархивированных компонентов проекта
           for archive in *.zip; do
             if [ -f "$archive" ]; then
-              echo "Распаковка архива: $archive..."
               unzip -qo "$archive" -d workspace/
             fi
           done
 
-          # Автоматический поиск файла project.godot
           ROOT_DIR=$(find workspace -name "project.godot" -exec dirname {} \;)
           if [ -n "$ROOT_DIR" ] && [ "$ROOT_DIR" != "workspace" ]; then
-            echo "Найден корень проекта в $ROOT_DIR. Выполняем слияние..."
             rsync -a "$ROOT_DIR/" workspace/
             rm -rf "$ROOT_DIR"
           fi
-
-          # Сброс локального кэша редактора
           rm -rf workspace/.godot
 
-      # 7. Генерация конфигуратора экспорта под Godot 4.7
-      - name: Generate Dynamic Export Preset (Godot 4.7)
+      - name: Generate Export Preset
         run: |
           set -euxo pipefail
           cat << 'EOF' > workspace/export_presets.cfg
@@ -114,34 +65,33 @@ jobs:
 
           name="iOS"
           platform="iOS"
-          runnable=false
+          runnable=true
           dedicated_server=false
           custom_features=""
           export_filter="all_resources"
           include_filter=""
           exclude_filter=""
-          export_path="build/ios/Aerdrom.xcodeproj"
+          export_path="build/ios/Aerdrom.ipa"
           encryption_include_filters=""
           encryption_exclude_filters=""
           encrypt_pck=false
           encrypt_script=false
 
           [preset.0.options]
-          application/icon=""
-          application/splash=""
-          application/splash_dark=""
-          application/splash_bg_color="#ffffff"
+          application/bundle_identifier="com.aerdrom.game"
+          application/signature="aerd"
+          application/short_version="1.0"
+          application/version="1.0"
           architectures/arm64=true
           codesign/identity=""
           codesign/entitlements=""
           provisioning_profile=""
-          privacy/camera_usage_description="Aerdrom requires camera access"
-          privacy/microphone_usage_description="Aerdrom requires microphone access"
-          privacy/photo_library_usage_description="Aerdrom requires photo library access"
+          privacy/camera_usage_description="Camera access"
+          privacy/microphone_usage_description="Microphone access"
+          privacy/photo_library_usage_description="Photo library access"
           EOF
 
-      # 8. Экспорт исходников из Godot 4.7
-      - name: Export Project via Godot 4.7 Headless
+      - name: Export Project via Godot
         run: |
           set -euxo pipefail
           mkdir -p workspace/build/ios
@@ -150,47 +100,12 @@ jobs:
           /Applications/Godot.app/Contents/MacOS/Godot --path workspace \
             --editor-setting-path "$PWD/godot_cache_dir" \
             --headless \
-            --export-release "iOS" workspace/build/ios/Aerdrom.ipa || true
+            --export-release "iOS" "$PWD/workspace/build/ios/Aerdrom.ipa"
 
-      # 9. Компиляция через Xcode и упаковка под ESign
-      - name: Xcode Compilation & Unsigned Packaging
-        run: |
-          set -euxo pipefail
-          cd workspace/build/ios
+          ls -lh workspace/build/ios/Aerdrom.ipa
 
-          if [ -f "Aerdrom.ipa" ]; then
-            echo "IPA создан напрямую через Godot!"
-          elif [ -d "Aerdrom.xcodeproj" ]; then
-            echo "Запуск компиляции через Xcode CLI (xcodebuild)..."
-            
-            xcodebuild archive \
-              -project Aerdrom.xcodeproj \
-              -scheme Aerdrom \
-              -sdk iphoneos \
-              -configuration Release \
-              -archivePath build/Aerdrom.xcarchive \
-              CODE_SIGNING_ALLOWED=NO \
-              CODE_SIGNING_REQUIRED=NO \
-              CODE_SIGN_IDENTITY="" \
-              PROVISIONING_PROFILE_SPECIFIER=""
-
-            mkdir -p Payload
-            cp -r build/Aerdrom.xcarchive/Products/Applications/*.app Payload/
-            zip -r Aerdrom.ipa Payload/
-          else
-            echo "Поиск собранных .ipa файлов..."
-            find . -name "*.ipa" -exec mv {} Aerdrom.ipa \;
-          fi
-
-          echo "=== РЕЗУЛЬТАТ СБОРКИ ==="
-          ls -lh Aerdrom.ipa
-          shasum -a 256 Aerdrom.ipa
-
-      # 10. Сохранение финального .ipa артефакта
-      - name: Upload Unsigned IPA Artifact (Ready for ESign)
+      - name: Upload Finished IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Aerdrom-Godot4.7-Unsigned-IPA
+          name: Aerdrom-iOS-IPA
           path: workspace/build/ios/Aerdrom.ipa
-          retention-days: 14
-          compression-level: 0
