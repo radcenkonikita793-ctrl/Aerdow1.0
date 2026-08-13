@@ -1,4 +1,4 @@
-name: Ultimate iOS Build for ESign
+name: Ultimate iOS IPA Build (Godot 4.3 + Xcode)
 
 on:
   push:
@@ -11,18 +11,24 @@ env:
 
 jobs:
   build-ios:
-    name: Build Unsigned IPA
+    name: Build Unsigned IPA for ESign
     runs-on: macos-14
-    timeout-minutes: 30
+    timeout-minutes: 35
 
     steps:
-      # 1. Загрузка исходников из репозитория
+      # 1. Клонирование репозитория
       - name: Checkout Source Code
         uses: actions/checkout@v4
         with:
           lfs: true
 
-      # 2. Скачивание и установка Godot Engine и официальных шаблонов
+      # 2. Активация инструментария Xcode 15
+      - name: Setup Xcode Environment
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "15.4"
+
+      # 3. Скачивание Godot Engine 4.3 и официальных шаблонов экспорта
       - name: Download & Install Godot Engine + Export Templates
         run: |
           set -euxo pipefail
@@ -40,8 +46,8 @@ jobs:
           mv templates/ios.zip "$TEMPLATE_DIR/ios.zip"
           rm -rf godot.zip templates.tpz templates/
 
-      # 3. Распаковка архивов проекта и выдача прав на запись
-      - name: Prepare Workspace & Grant Write Permissions
+      # 4. Распаковка архивов проекта и выдача прав
+      - name: Unpack Workspace & Set Permissions
         run: |
           set -euxo pipefail
           mkdir -p workspace
@@ -58,11 +64,18 @@ jobs:
             rm -rf "$ROOT_DIR"
           fi
 
-          # Выдача полных прав на запись для предотвращения ошибок доступа
-          chmod -R 777 workspace
+          # Полный сброс кэша и выдача прав на запись
           rm -rf workspace/.godot
+          chmod -R 777 workspace
 
-      # 4. Генерация корректного export_presets.cfg
+      # 5. Предварительный импорт ресурсов (убирает ошибки filesystem_cache8)
+      - name: Import Godot Project Resources
+        run: |
+          set -euxo pipefail
+          /Applications/Godot.app/Contents/MacOS/Godot --path workspace --headless --editor --quit || true
+          chmod -R 777 workspace
+
+      # 6. Генерация конфигурации пресета под Xcode
       - name: Generate Export Presets
         run: |
           set -euxo pipefail
@@ -77,7 +90,7 @@ jobs:
           export_filter="all_resources"
           include_filter=""
           exclude_filter=""
-          export_path="build/ios/Aerdrom.ipa"
+          export_path="build/ios/Aerdrom.xcodeproj"
           encryption_include_filters=""
           encryption_exclude_filters=""
           encrypt_pck=false
@@ -98,8 +111,8 @@ jobs:
           privacy/photo_library_usage_description="Photo library access"
           EOF
 
-      # 5. Экспорт проекта через Godot Headless
-      - name: Export iOS Project
+      # 7. Экспорт из Godot в проект Xcode (.xcodeproj)
+      - name: Export Xcode Project via Godot
         run: |
           set -euxo pipefail
           mkdir -p workspace/build/ios
@@ -107,11 +120,34 @@ jobs:
 
           /Applications/Godot.app/Contents/MacOS/Godot --path workspace \
             --headless \
-            --export-release "iOS" "$PWD/workspace/build/ios/Aerdrom.ipa"
+            --export-release "iOS" "$PWD/workspace/build/ios/Aerdrom.xcodeproj"
 
-          ls -lh workspace/build/ios/Aerdrom.ipa
+      # 8. Компиляция приложения с помощью Xcode CLI и запаковка под ESign
+      - name: Compile Unsigned IPA via Xcode
+        run: |
+          set -euxo pipefail
+          cd workspace/build/ios
 
-      # 6. Сохранение готового файла .ipa
+          echo "Сборка архива через xcodebuild..."
+          xcodebuild archive \
+            -project Aerdrom.xcodeproj \
+            -scheme Aerdrom \
+            -sdk iphoneos \
+            -configuration Release \
+            -archivePath build/Aerdrom.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER=""
+
+          echo "Создание структуры Payload и упаковка в .ipa..."
+          mkdir -p Payload
+          cp -r build/Aerdrom.xcarchive/Products/Applications/*.app Payload/
+          zip -r Aerdrom.ipa Payload/
+
+          ls -lh Aerdrom.ipa
+
+      # 9. Сохранение финального неподписанного .ipa
       - name: Upload Finished IPA Artifact
         uses: actions/upload-artifact@v4
         with:
